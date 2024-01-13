@@ -95,16 +95,16 @@ document.head.appendChild(style);
         let browserTools = document.querySelector("#browserTools #browserTypeSelector");
 
         let addNoCommentButton = createButton('评论',
-            '将本页无评论条目加入/移除删除列表',
+            '将本页“无评论”条目加入/移出删除列表',
             (item) => !item.querySelector('#comment_box'));
         browserTools.appendChild(addNoCommentButton);
 
         let addNoRatingButton = createButton('评分',
-            '按评分将条目加入/移除删除列表',
+            '将本页“无评分”条目加入/移出删除列表',
             (item) => !item.querySelector('.collectInfo .starstop-s'));
         browserTools.appendChild(addNoRatingButton);
 
-        let addAllButton = createButton('所有', '将所有条目加入/移除删除列表', () => true);
+        let addAllButton = createButton('所有', '将本页“所有条目”加入/移出删除列表', () => true);
         browserTools.appendChild(addAllButton);
 
     }
@@ -120,6 +120,7 @@ document.head.appendChild(style);
             let data = collect_list.join('\n');
             let html = '<form>' +
                 '<span class="text">以下是你所保存的待删除收藏条目，你可以<strong>按行</strong>编辑和替换，确认无误后点击“保存修改”。</span>' +
+                '<span class="text">“执行删除”后<strong>不可撤销</strong>，慎重操作。</span>' +
                 '<textarea id="data_content" name="content" cols="45" rows="15" style="width: 1000px;" class="quick">' + data + '</textarea>' +
                 '<input id="submitBtn" class="inputBtn" value="保存修改" readonly unselectable="on" style="width:52px">' +
                 '<input id="clearBtn" class="inputBtn" value="执行删除" readonly unselectable="on" style="width:52px; margin-left: 10px">' +
