@@ -1,4 +1,4 @@
-# bangumi脚本说明
+# collect-delete-batch脚本说明
 
 功能：
 
