@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Bangumi 收藏条目批量删除
 // @namespace    https://github.com/furtherun/bangumi-collect-delete-batch
-// @version      0.0.1
+// @version      0.0.2
 // @author       furtherun
 // @description  选择条目加入“待删除列表”后批量删除，无需每个条目进行确认。
-// @description  设置页面参考代码，bangumi过滤搜索结果，原始脚本作者：Liaune，代码地址，
+// @description  设置页面参考代码，bangumi 过滤搜索结果，原始脚本作者：Liaune，代码地址，
 // @description  https://github.com/bangumi/scripts/blob/master/liaune/bangumi_result_blacklist.user.js
 // @match        http*://bgm.tv/*
 // @match        http*://chii.in/*
@@ -12,169 +12,478 @@
 // @grant        none
 // ==/UserScript==
 
-// 创建一个<style>元素
-let style = document.createElement('style');
-// 设置CSS代码
-style.textContent = `
-    .collect_delete_checkbox {
-        margin-right: 5px;
-        border: 1px solid #ccc;
-        border-radius: 3px;
-        background-color: #f9f8f7;
-    }
-    .collect_delete_button {
-        font-size: 10px;
-        padding: 1px;
-        cursor: pointer;
-        margin: 0 2px;
-    }
-    `;
-// 将<style>元素添加到<head>元素中
-document.head.appendChild(style);
-
 (function () {
+    const STORAGE_KEY = 'bgm_collect_delete_list';
+    const SETTINGS_PATH_RE = /^\/settings(?:\/|$)/;
 
-    if (document.location.href.match(/list/)) {
-        let collectModifys = document.querySelectorAll(".collectModify");
-        let collect_list = JSON.parse(localStorage.getItem('bgm_collect_delete_list')) || [];
+    function addStyles() {
+        if (document.getElementById('bgm-collect-delete-batch-style')) {
+            return;
+        }
+
+        const style = document.createElement('style');
+        style.id = 'bgm-collect-delete-batch-style';
+        style.textContent = `
+            .collect_delete_checkbox {
+                margin-right: 5px;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                background-color: #f9f8f7;
+            }
+            .collect_delete_button {
+                font-size: 10px;
+                padding: 1px;
+                cursor: pointer;
+                margin: 0 2px;
+            }
+            .collect-delete-batch-settings {
+                max-width: 1000px;
+                font-size: 13px;
+                color: #444;
+            }
+            .collect-delete-batch-settings .text {
+                display: block;
+                margin-bottom: 8px;
+                line-height: 1.6;
+            }
+            .collect-delete-batch-settings textarea {
+                width: 100%;
+                max-width: 1000px;
+                min-height: 220px;
+                padding: 8px;
+                border: 1px solid #ccc;
+                background: #fff;
+                box-sizing: border-box;
+                font-family: Consolas, Monaco, monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                resize: vertical;
+            }
+            .collect-delete-batch-settings .inputBtn {
+                margin-top: 10px;
+                padding: 2px 10px;
+                border: 1px solid #ccc;
+                background: #f6f6f6;
+                color: #333;
+                cursor: pointer;
+            }
+            .collect-delete-batch-settings .inputBtn:hover {
+                background: #ececec;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function extractNumericId(value) {
+        if (value == null) {
+            return '';
+        }
+
+        const match = String(value).match(/(\d+)/);
+        return match ? match[1] : '';
+    }
+
+    function parseDeleteEntry(value) {
+        if (value && typeof value === 'object') {
+            const id = extractNumericId(value.id || value.subjectId || value.entryId || '');
+            if (!id) {
+                return null;
+            }
+            return {
+                id,
+                userId: String(value.userId || value.user || '').trim(),
+                title: String(value.title || value.name || '').trim(),
+            };
+        }
+
+        if (typeof value !== 'string') {
+            return null;
+        }
+
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+
+        const commandMatch = trimmed.match(/eraseSubjectCollect\(\s*(\d+)\s*,\s*'([^']*)'/i);
+        if (commandMatch) {
+            return {
+                id: commandMatch[1],
+                userId: commandMatch[2] || '',
+                title: '',
+            };
+        }
+
+        const simpleMatch = trimmed.match(/eraseSubjectCollect\(\s*(\d+)/i);
+        if (simpleMatch) {
+            return {
+                id: simpleMatch[1],
+                userId: '',
+                title: '',
+            };
+        }
+
+        const id = extractNumericId(trimmed);
+        if (!id) {
+            return null;
+        }
+
+        return {
+            id,
+            userId: '',
+            title: trimmed.replace(/^\d+\s*(?:\/|—|-|:)?\s*/, '').trim(),
+        };
+    }
+
+    function normalizeDeleteList(list) {
+        const result = [];
+        const seen = new Set();
+
+        (Array.isArray(list) ? list : []).forEach((item) => {
+            const entry = parseDeleteEntry(item);
+            if (!entry || seen.has(entry.id)) {
+                return;
+            }
+            seen.add(entry.id);
+            result.push(entry);
+        });
+
+        return result;
+    }
+
+    function getDeleteList() {
+        try {
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+            return normalizeDeleteList(stored);
+        } catch (error) {
+            console.error('[bgm collect delete batch] 读取待删除列表失败', error);
+            return [];
+        }
+    }
+
+    function saveDeleteList(list) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeDeleteList(list)));
+    }
+
+    function buildDeleteCommand(entry) {
+        if (!entry || !entry.id) {
+            return '';
+        }
+        const userId = entry.userId ? `'${entry.userId}'` : "''";
+        return `eraseSubjectCollect(${entry.id}, ${userId})`;
+    }
+
+    function getSubjectInfo(item) {
+        const collectModify = item.querySelector('.collectModify');
+        if (!collectModify) {
+            return null;
+        }
+
+        const del = collectModify.querySelectorAll('.l')[1];
+        if (!del) {
+            return null;
+        }
+
+        const onclickValue = del.getAttribute('onclick') || '';
+        const userIdMatch = onclickValue.match(/eraseSubjectCollect\(\s*\d+\s*,\s*'([^']*)'/i);
+        const subjectId = item.getAttribute('data-subject-id') || (onclickValue.match(/eraseSubjectCollect\(\s*(\d+)/i) || [])[1] || '';
+
+        const titleLink = item.querySelector('h3 a.l, h3 a');
+        const titleText = titleLink ? titleLink.textContent.trim() : '';
+        const subTitleText = item.querySelector('h3 small.grey') ? item.querySelector('h3 small.grey').textContent.trim() : '';
+        const title = [titleText, subTitleText].filter(Boolean).join(' / ');
+
+        return {
+            id: subjectId,
+            userId: userIdMatch ? userIdMatch[1] : '',
+            title,
+        };
+    }
+
+    function upsertDeleteEntry(list, entry) {
+        if (!entry || !entry.id) {
+            return list;
+        }
+
+        const nextList = list.filter((item) => item.id !== entry.id);
+        nextList.push(entry);
+        return nextList;
+    }
+
+    function removeDeleteEntry(list, id) {
+        return list.filter((item) => item.id !== id);
+    }
+
+    function initListPage() {
+        const collectModifys = document.querySelectorAll('.collectModify');
+        const collectList = getDeleteList();
 
         collectModifys.forEach((collectModify) => {
-            let del = collectModify.querySelectorAll(".l")[1];
-            let del_id = del.attributes["onclick"].value;
+            if (collectModify.querySelector('.collect_delete_checkbox[data-bgm-delete-batch-checkbox]')) {
+                return;
+            }
 
-            let checkbox = document.createElement('input');
+            const listItem = collectModify.closest('li');
+            if (!listItem) {
+                return;
+            }
+
+            const info = getSubjectInfo(listItem);
+            const del = collectModify.querySelectorAll('.l')[1];
+            if (!del || !info || !info.id) {
+                return;
+            }
+
+            const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'collect_delete_checkbox';
-            checkbox.checked = collect_list.includes(del_id);
+            checkbox.setAttribute('data-bgm-delete-batch-checkbox', 'true');
+            checkbox.checked = collectList.some((entry) => entry.id === info.id);
 
             checkbox.addEventListener('click', function () {
+                const currentList = getDeleteList();
                 if (this.checked) {
-                    collect_list.push(del_id);
+                    saveDeleteList(upsertDeleteEntry(currentList, info));
                 } else {
-                    let index = collect_list.indexOf(del_id);
-                    if (index !== -1) {
-                        collect_list.splice(index, 1);
-                    }
+                    saveDeleteList(removeDeleteEntry(currentList, info.id));
                 }
-                localStorage.setItem('bgm_collect_delete_list', JSON.stringify(collect_list));
             });
 
             collectModify.insertBefore(checkbox, del);
         });
 
         function createButton(text, title, conditionFunc) {
-            let button = document.createElement('button');
+            const button = document.createElement('button');
             button.textContent = text;
             button.classList.add('collect_delete_button');
+            button.setAttribute('data-bgm-delete-batch-bulk-button', 'true');
             button.title = title;
 
             button.addEventListener('click', function () {
-                let items = document.querySelectorAll('#browserItemList>li');
+                const items = document.querySelectorAll('#browserItemList>li');
+                const currentList = getDeleteList();
+                const nextList = currentList.slice();
+
                 items.forEach((item) => {
-                    let del = item.querySelector(".collectModify").querySelectorAll(".l")[1];
-                    let del_id = del.attributes["onclick"].value;
-                    if (conditionFunc(item)) {
-                        let index = collect_list.indexOf(del_id);
-                        if (index !== -1) {
-                            collect_list.splice(index, 1);
-                        } else {
-                            collect_list.push(del_id);
-                        }
-                        let checkbox = item.querySelector('.collectModify .collect_delete_checkbox');
-                        if (checkbox) {
-                            checkbox.checked = !checkbox.checked;
-                        }
+                    if (!conditionFunc(item)) {
+                        return;
+                    }
+
+                    const info = getSubjectInfo(item);
+                    if (!info || !info.id) {
+                        return;
+                    }
+
+                    const index = nextList.findIndex((entry) => entry.id === info.id);
+                    if (index !== -1) {
+                        nextList.splice(index, 1);
+                    } else {
+                        nextList.push(info);
+                    }
+
+                    const checkbox = item.querySelector('.collect_delete_checkbox[data-bgm-delete-batch-checkbox]');
+                    if (checkbox) {
+                        checkbox.checked = nextList.some((entry) => entry.id === info.id);
                     }
                 });
-                localStorage.setItem('bgm_collect_delete_list', JSON.stringify(collect_list));
+
+                saveDeleteList(nextList);
             });
 
             return button;
         }
 
-        let browserTools = document.querySelector("#browserTools #browserTypeSelector");
+        const browserTools = document.querySelector('#browserTools #browserTypeSelector');
+        if (!browserTools) {
+            return;
+        }
 
-        let addNoCommentButton = createButton('评论',
-            '将本页“无评论”条目加入/移出删除列表',
-            (item) => !item.querySelector('#comment_box'));
-        browserTools.appendChild(addNoCommentButton);
+        if (!browserTools.querySelector('.collect_delete_button[data-bgm-delete-batch-bulk-button]')) {
+            const addNoCommentButton = createButton('评论', '将本页“无评论”条目加入/移出删除列表', (item) => !item.querySelector('#comment_box'));
+            browserTools.appendChild(addNoCommentButton);
 
-        let addNoRatingButton = createButton('评分',
-            '将本页“无评分”条目加入/移出删除列表',
-            (item) => !item.querySelector('.collectInfo .starstop-s'));
-        browserTools.appendChild(addNoRatingButton);
+            const addNoRatingButton = createButton('评分', '将本页“无评分”条目加入/移出删除列表', (item) => !item.querySelector('.collectInfo .starstop-s'));
+            browserTools.appendChild(addNoRatingButton);
 
-        let addAllButton = createButton('所有', '将本页“所有条目”加入/移出删除列表', () => true);
-        browserTools.appendChild(addAllButton);
-
+            const addAllButton = createButton('所有', '将本页“所有条目”加入/移出删除列表', () => true);
+            browserTools.appendChild(addAllButton);
+        }
     }
 
-    // 设置页面
-    if (document.location.href.match(/settings/)) {
+    function getSettingsContentContainer() {
+        return document.getElementById('columnA')
+            || document.getElementById('columnB')
+            || document.querySelector('.column:not(#columnSearchA)')
+            || document.getElementById('main')
+            || document.body;
+    }
 
-        $("#header > ul").append('<li><a id="deletelist" href="javascript:void(0);"><span>待删除收藏条目</span></a></li>');
-        $("#deletelist").on("click", function () {
-            $("#header").find("[class='selected']").removeClass("selected");
-            $("#deletelist").addClass("selected");
-            let collect_list = JSON.parse(localStorage.getItem('bgm_collect_delete_list')) || [];
-            let data = collect_list.join('\n');
-            let html = '<form>' +
-                '<span class="text">以下是你所保存的待删除收藏条目，你可以<strong>按行</strong>编辑和替换，确认无误后点击“保存修改”。</span>' +
-                '<span class="text">“执行删除”后<strong>不可撤销</strong>，慎重操作。</span>' +
-                '<textarea id="data_content" name="content" cols="45" rows="15" style="width: 1000px;" class="quick">' + data + '</textarea>' +
-                '<input id="submitBtn" class="inputBtn" value="保存修改" readonly unselectable="on" style="width:52px">' +
-                '<input id="clearBtn" class="inputBtn" value="执行删除" readonly unselectable="on" style="width:52px; margin-left: 10px">' +
-                '<a id="alert_submit" style="color: #F09199; font-size: 14px; padding: 20px"></a>' +
-                '</form>';
-            $("#columnA").html(html);
-            $("#submitBtn").on("click", function () {
-                data = $("#data_content").attr("value");
-                collect_list = data.split('\n');
-                localStorage.setItem('bgm_collect_delete_list', JSON.stringify(collect_list));
-                alert('保存成功！');
+    function renderDeleteListView() {
+        const container = getSettingsContentContainer();
+        if (!container) {
+            return;
+        }
+
+        const list = getDeleteList();
+        const data = list.map((entry) => `${entry.id}${entry.title ? ` ${entry.title}` : ''}`).join('\n');
+
+        const html = `
+            <form class="collect-delete-batch-settings">
+                <span class="text">以下是你标记的待删除收藏条目。每行以条目编号开头，后面的条目注释仅供参考。</span>
+                <span class="text">自行编写只需要按行填写条目编号即可，填写后及时保存。</span>
+                <span class="text">“执行删除”后<strong>不可撤销</strong>，慎重操作。</span>
+                <textarea id="bgmDataContent" name="content" cols="45" rows="15" class="quick">${escapeHtml(data)}</textarea>
+                <div>
+                    <button type="button" id="bgmSubmitBtn" class="inputBtn">保存修改</button>
+                    <button type="button" id="bgmClearBtn" class="inputBtn" style="margin-left: 10px;">执行删除</button>
+                    <span id="bgmAlert" style="color: #F09199; font-size: 14px; padding-left: 12px;"></span>
+                </div>
+            </form>`;
+
+        container.innerHTML = html;
+
+        const submitButton = document.getElementById('bgmSubmitBtn');
+        const clearButton = document.getElementById('bgmClearBtn');
+        const alertBox = document.getElementById('bgmAlert');
+        const dataInput = document.getElementById('bgmDataContent');
+
+        if (submitButton) {
+            submitButton.addEventListener('click', function () {
+                if (!dataInput) {
+                    return;
+                }
+
+                const nextList = dataInput.value
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter(Boolean)
+                    .map((line) => {
+                        const id = extractNumericId(line);
+                        if (!id) {
+                            return null;
+                        }
+                        const previous = list.find((entry) => entry.id === id);
+                        return {
+                            id,
+                            userId: previous ? previous.userId : '',
+                            title: previous ? previous.title : line.replace(/^\d+\s*/, '').trim(),
+                        };
+                    })
+                    .filter(Boolean);
+
+                saveDeleteList(nextList);
+                if (alertBox) {
+                    alertBox.textContent = '保存成功！';
+                }
             });
-            $("#clearBtn").on("click", function () {
-                let collect_list = JSON.parse(localStorage.getItem('bgm_collect_delete_list')) || [];
-                let delay = 0; // 延迟时间，单位为毫秒
+        }
 
-                // 创建一个隐藏的 iframe
-                let iframe = document.createElement('iframe');
+        if (clearButton) {
+            clearButton.addEventListener('click', function () {
+                const pending = getDeleteList();
+                if (!pending.length) {
+                    if (alertBox) {
+                        alertBox.textContent = '当前没有待删除条目。';
+                    }
+                    return;
+                }
+
+                const iframe = document.createElement('iframe');
                 iframe.style.display = 'none';
                 document.body.appendChild(iframe);
 
-                for (let item of collect_list) {
-                    setTimeout(function () {
-                        // 在 iframe 中加载新页面
-                        iframe.src = window.location.href;
+                let index = 0;
+                let remaining = pending.slice();
 
-                        // 等待 iframe 加载完成
-                        iframe.onload = function () {
-                            // 跳过 iframe 中的确认对话框
+                const runNext = () => {
+                    if (index >= pending.length) {
+                        saveDeleteList([]);
+                        if (dataInput) {
+                            dataInput.value = '';
+                        }
+                        if (alertBox) {
+                            alertBox.textContent = '删除执行已完成。';
+                        }
+                        iframe.remove();
+                        return;
+                    }
+
+                    const entry = pending[index++];
+                    iframe.src = window.location.href;
+                    iframe.onload = function () {
+                        if (iframe.contentWindow) {
                             iframe.contentWindow.confirm = function () {
                                 return true;
                             };
+                            try {
+                                iframe.contentWindow.eval(buildDeleteCommand(entry));
+                            } catch (error) {
+                                console.error('[bgm collect delete batch] 执行删除脚本失败', error);
+                            }
+                        }
 
-                            // 在 iframe 中执行命令
-                            iframe.contentWindow.eval(item);
+                        remaining = remaining.filter((item) => item.id !== entry.id);
+                        saveDeleteList(remaining);
+                        setTimeout(runNext, 2000);
+                    };
+                };
 
-                            // 执行完 item 后，从 collect_list 中删除它
-                            collect_list = collect_list.filter(i => i !== item);
-
-                            // 更新本地存储
-                            localStorage.setItem('bgm_collect_delete_list', JSON.stringify(collect_list));
-
-                            // 更新表单中的显示
-                            $("#data_content").attr("value", collect_list.join('\n'));
-                        };
-                    }, delay);
-
-                    delay += 2000; // 增加延迟时间
-                }
-
-                $("#data_content").attr("value", "");
-                localStorage.removeItem('bgm_collect_delete_list');
+                runNext();
             });
+        }
+    }
+
+    function injectSettingsEntry() {
+        const navList = document.querySelector('#columnSearchA ul');
+        if (!navList || navList.querySelector('[data-bgm-delete-list-link]')) {
+            return;
+        }
+
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = 'javascript:void(0);';
+        link.setAttribute('data-bgm-delete-list-link', 'true');
+        link.addEventListener('click', function (event) {
+            event.preventDefault();
+            document.querySelectorAll('#columnSearchA a').forEach((anchor) => {
+                anchor.classList.toggle('selected', anchor === link);
+            });
+            renderDeleteListView();
         });
 
+        const span = document.createElement('span');
+        span.textContent = '待删除收藏条目';
+        link.appendChild(span);
+        item.appendChild(link);
+        navList.appendChild(item);
+    }
+
+    function initSettingsPage() {
+        if (!SETTINGS_PATH_RE.test(window.location.pathname)) {
+            return;
+        }
+        injectSettingsEntry();
+    }
+
+    function init() {
+        addStyles();
+        if (window.location.href.match(/list/)) {
+            initListPage();
+        }
+        initSettingsPage();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
