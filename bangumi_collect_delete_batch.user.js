@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bangumi 收藏条目批量删除
 // @namespace    https://github.com/furtherun/bangumi-collect-delete-batch
-// @version      0.0.2
+// @version      0.0.3
 // @author       furtherun
 // @description  选择条目加入“待删除列表”后批量删除，无需每个条目进行确认。
 // @description  设置页面参考代码，bangumi 过滤搜索结果，原始脚本作者：Liaune，代码地址，
@@ -15,6 +15,29 @@
 (function () {
     const STORAGE_KEY = 'bgm_collect_delete_list';
     const SETTINGS_PATH_RE = /^\/settings(?:\/|$)/;
+    const UI_TEXT = Object.freeze({
+        customizePanelTitle: '待删除收藏条目',
+        settingsEntryLabel: '待删除收藏条目',
+        customizeToggleLabel: '个性化',
+        introLine1: '以下是你标记的待删除收藏条目。每行以条目编号开头，后面的条目注释仅供参考。',
+        introLine2: '自行编写只需要按行填写条目编号即可，填写后及时保存，并<strong>手动刷新</strong>页面。',
+        warningLine: '“执行删除”后<strong>不可撤销</strong>，慎重操作。',
+        saveButton: '保存修改',
+        deleteButton: '执行删除',
+        saveSuccess: '保存成功！请<strong>手动刷新</strong>页面。',
+        emptyList: '当前没有待删除条目。',
+        deletingProgress: '正在执行删除：<strong>{current}/{total}</strong>',
+        deletingItem: '正在处理 <strong>{current}/{total}</strong>：{label}',
+        deleteFinished: '删除执行已完成。请<strong>手动刷新</strong>页面。',
+        noName: '（暂无名称）',
+        addNoCommentButton: '评论',
+        addNoRatingButton: '评分',
+        addAllButton: '所有',
+        addNoCommentTitle: '将本页“无评论”条目加入/移出删除列表',
+        addNoRatingTitle: '将本页“无评分”条目加入/移出删除列表',
+        addAllTitle: '将本页“所有条目”加入/移出删除列表',
+        panelSectionTitle: '待删除收藏条目'
+    });
 
     function addStyles() {
         if (document.getElementById('bgm-collect-delete-batch-style')) {
@@ -46,6 +69,10 @@
                 margin-bottom: 8px;
                 line-height: 1.6;
             }
+            .collect-delete-batch-settings .text strong {
+                font-weight: 600;
+                color: #333;
+            }
             .collect-delete-batch-settings textarea {
                 width: 100%;
                 max-width: 1000px;
@@ -69,6 +96,51 @@
             }
             .collect-delete-batch-settings .inputBtn:hover {
                 background: #ececec;
+            }
+            .collect-delete-batch-settings-panel {
+                margin-top: 12px;
+            }
+            .collect-delete-batch-settings-panel textarea {
+                min-height: 180px;
+            }
+            .collect-delete-batch-panel-section {
+                margin-top: 16px;
+                padding-top: 16px;
+                border-top: 1px solid #e5e5e5;
+            }
+            .collect-delete-batch-panel-section .title {
+                margin-bottom: 8px;
+                font-weight: 600;
+                color: #333;
+            }
+            .collect-delete-batch-tab-link {
+                cursor: pointer;
+            }
+            .collect-delete-batch-tab-link.focus {
+                font-weight: 600;
+            }
+            .collect-delete-batch-customize-panel {
+                position: fixed;
+                z-index: 2147483647;
+                width: 560px;
+                max-width: calc(100vw - 24px);
+                max-height: calc(100vh - 24px);
+                overflow: auto;
+                background: #fff;
+                border: 1px solid #ddd;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+                border-radius: 8px;
+                resize: both;
+            }
+            .collect-delete-batch-customize-panel .header {
+                cursor: move;
+                user-select: none;
+                padding: 12px 16px;
+                border-bottom: 1px solid #eee;
+                background: #f7f7f7;
+            }
+            .collect-delete-batch-customize-panel .content {
+                padding: 16px;
             }
         `;
         document.head.appendChild(style);
@@ -326,24 +398,24 @@
             || document.body;
     }
 
-    function renderDeleteListView() {
-        const container = getSettingsContentContainer();
+    function renderDeleteListView(container, isPanel) {
         if (!container) {
             return;
         }
 
         const list = getDeleteList();
         const data = list.map((entry) => `${entry.id}${entry.title ? ` ${entry.title}` : ''}`).join('\n');
+        const panelClass = isPanel ? ' collect-delete-batch-settings-panel' : '';
 
         const html = `
-            <form class="collect-delete-batch-settings">
-                <span class="text">以下是你标记的待删除收藏条目。每行以条目编号开头，后面的条目注释仅供参考。</span>
-                <span class="text">自行编写只需要按行填写条目编号即可，填写后及时保存。</span>
-                <span class="text">“执行删除”后<strong>不可撤销</strong>，慎重操作。</span>
+            <form class="collect-delete-batch-settings${panelClass}">
+                <span class="text">${UI_TEXT.introLine1}</span>
+                <span class="text">${UI_TEXT.introLine2}</span>
+                <span class="text">${UI_TEXT.warningLine}</span>
                 <textarea id="bgmDataContent" name="content" cols="45" rows="15" class="quick">${escapeHtml(data)}</textarea>
                 <div>
-                    <button type="button" id="bgmSubmitBtn" class="inputBtn">保存修改</button>
-                    <button type="button" id="bgmClearBtn" class="inputBtn" style="margin-left: 10px;">执行删除</button>
+                    <button type="button" id="bgmSubmitBtn" class="inputBtn">${UI_TEXT.saveButton}</button>
+                    <button type="button" id="bgmClearBtn" class="inputBtn" style="margin-left: 10px;">${UI_TEXT.deleteButton}</button>
                     <span id="bgmAlert" style="color: #F09199; font-size: 14px; padding-left: 12px;"></span>
                 </div>
             </form>`;
@@ -381,7 +453,7 @@
 
                 saveDeleteList(nextList);
                 if (alertBox) {
-                    alertBox.textContent = '保存成功！';
+                    alertBox.innerHTML = UI_TEXT.saveSuccess;
                 }
             });
         }
@@ -391,7 +463,7 @@
                 const pending = getDeleteList();
                 if (!pending.length) {
                     if (alertBox) {
-                        alertBox.textContent = '当前没有待删除条目。';
+                        alertBox.innerHTML = UI_TEXT.emptyList;
                     }
                     return;
                 }
@@ -403,6 +475,22 @@
                 let index = 0;
                 let remaining = pending.slice();
 
+                const renderProgress = (current, entry) => {
+                    if (!alertBox) {
+                        return;
+                    }
+
+                    const label = entry && (entry.title || entry.id);
+                    alertBox.innerHTML = label
+                        ? UI_TEXT.deletingItem
+                            .replace('{current}', String(current))
+                            .replace('{total}', String(pending.length))
+                            .replace('{label}', escapeHtml(label))
+                        : UI_TEXT.deletingProgress
+                            .replace('{current}', String(current))
+                            .replace('{total}', String(pending.length));
+                };
+
                 const runNext = () => {
                     if (index >= pending.length) {
                         saveDeleteList([]);
@@ -410,13 +498,14 @@
                             dataInput.value = '';
                         }
                         if (alertBox) {
-                            alertBox.textContent = '删除执行已完成。';
+                            alertBox.innerHTML = UI_TEXT.deleteFinished;
                         }
                         iframe.remove();
                         return;
                     }
 
                     const entry = pending[index++];
+                    renderProgress(index, entry);
                     iframe.src = window.location.href;
                     iframe.onload = function () {
                         if (iframe.contentWindow) {
@@ -456,14 +545,121 @@
             document.querySelectorAll('#columnSearchA a').forEach((anchor) => {
                 anchor.classList.toggle('selected', anchor === link);
             });
-            renderDeleteListView();
+            renderDeleteListView(getSettingsContentContainer(), false);
         });
 
         const span = document.createElement('span');
-        span.textContent = '待删除收藏条目';
+        span.textContent = UI_TEXT.settingsEntryLabel;
         link.appendChild(span);
         item.appendChild(link);
         navList.appendChild(item);
+    }
+
+    function injectCustomizePanel() {
+        const panel = document.getElementById('customize-panel');
+        if (!panel) {
+            return;
+        }
+
+        if (!panel.classList.contains('collect-delete-batch-customize-panel')) {
+            panel.classList.add('collect-delete-batch-customize-panel');
+        }
+
+        if (!panel.dataset.bgmDeleteBatchHeaderBound) {
+            const header = panel.querySelector('.header');
+            if (header) {
+                header.addEventListener('mousedown', function (event) {
+                    if (event.target.closest('span.close')) {
+                        return;
+                    }
+
+                    const rect = panel.getBoundingClientRect();
+                    const offsetX = event.clientX - rect.left;
+                    const offsetY = event.clientY - rect.top;
+                    const startLeft = rect.left;
+                    const startTop = rect.top;
+
+                    const moveHandler = (moveEvent) => {
+                        const nextLeft = moveEvent.clientX - offsetX;
+                        const nextTop = moveEvent.clientY - offsetY;
+                        panel.style.left = `${Math.max(8, nextLeft)}px`;
+                        panel.style.top = `${Math.max(8, nextTop)}px`;
+                        panel.dataset.dragStartLeft = String(startLeft);
+                        panel.dataset.dragStartTop = String(startTop);
+                    };
+
+                    const upHandler = () => {
+                        document.removeEventListener('mousemove', moveHandler);
+                        document.removeEventListener('mouseup', upHandler);
+                    };
+
+                    document.addEventListener('mousemove', moveHandler);
+                    document.addEventListener('mouseup', upHandler);
+                });
+                panel.dataset.bgmDeleteBatchHeaderBound = 'true';
+            }
+        }
+
+        let customTabLink = panel.querySelector('.collect-delete-batch-tab-link');
+        if (!customTabLink) {
+            const tabList = panel.querySelector('.panel-tabs ul');
+            if (tabList) {
+                const item = document.createElement('li');
+                customTabLink = document.createElement('a');
+                customTabLink.href = 'javascript:void(0);';
+                customTabLink.className = 'tab-item collect-delete-batch-tab-link';
+                customTabLink.setAttribute('data-tab', 'delete-batch');
+                customTabLink.textContent = UI_TEXT.panelSectionTitle;
+                customTabLink.addEventListener('click', function (event) {
+                    event.preventDefault();
+                    panel.querySelectorAll('.tab-item').forEach((tab) => {
+                        tab.classList.toggle('focus', tab === customTabLink);
+                    });
+                    panel.querySelectorAll('.tab-content').forEach((tabContent) => {
+                        tabContent.classList.toggle('active', tabContent.id === 'delete-batch-tab');
+                    });
+
+                    let deleteTab = panel.querySelector('#delete-batch-tab');
+                    if (!deleteTab) {
+                        const content = panel.querySelector('.content');
+                        if (!content) {
+                            return;
+                        }
+                        deleteTab = document.createElement('div');
+                        deleteTab.id = 'delete-batch-tab';
+                        deleteTab.className = 'tab-content';
+                        deleteTab.setAttribute('data-bgm-delete-list-panel', 'true');
+                        content.appendChild(deleteTab);
+                        const section = document.createElement('div');
+                        section.className = 'section collect-delete-batch-panel-section';
+                        section.innerHTML = `<div class="title">${UI_TEXT.panelSectionTitle}</div>`;
+                        const wrapper = document.createElement('div');
+                        deleteTab.appendChild(section);
+                        section.appendChild(wrapper);
+                        renderDeleteListView(wrapper, true);
+                    }
+
+                    deleteTab = panel.querySelector('#delete-batch-tab');
+                    if (deleteTab) {
+                        deleteTab.classList.add('active');
+                        deleteTab.style.display = '';
+                    }
+                });
+                item.appendChild(customTabLink);
+                tabList.appendChild(item);
+            }
+        }
+
+        const panelContent = panel.querySelector('.content');
+        if (!panelContent) {
+            return;
+        }
+
+        const deleteTab = panel.querySelector('#delete-batch-tab');
+        if (deleteTab && customTabLink && customTabLink.classList.contains('focus')) {
+            deleteTab.classList.add('active');
+            deleteTab.style.display = '';
+        }
     }
 
     function initSettingsPage() {
@@ -473,12 +669,43 @@
         injectSettingsEntry();
     }
 
+    function initCustomizePanel() {
+        const toggleLink = document.querySelector('.toggle-customize');
+        if (!toggleLink) {
+            return;
+        }
+
+        if (!toggleLink.dataset.bgmDeleteBatchBound) {
+            toggleLink.setAttribute('title', UI_TEXT.customizeToggleLabel);
+            toggleLink.addEventListener('click', function () {
+                setTimeout(injectCustomizePanel, 0);
+            });
+            toggleLink.dataset.bgmDeleteBatchBound = 'true';
+        }
+
+        if (document.getElementById('customize-panel')) {
+            injectCustomizePanel();
+        }
+    }
+
     function init() {
         addStyles();
         if (window.location.href.match(/list/)) {
             initListPage();
         }
         initSettingsPage();
+        initCustomizePanel();
+
+        const body = document.body;
+        if (body && !body.dataset.bgmDeleteBatchObserver) {
+            const observer = new MutationObserver(function () {
+                if (document.getElementById('customize-panel')) {
+                    injectCustomizePanel();
+                }
+            });
+            observer.observe(body, { childList: true, subtree: true });
+            body.dataset.bgmDeleteBatchObserver = 'true';
+        }
     }
 
     if (document.readyState === 'loading') {
