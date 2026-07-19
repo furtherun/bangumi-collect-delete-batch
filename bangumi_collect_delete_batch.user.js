@@ -4,8 +4,7 @@
 // @version      0.0.3
 // @author       furtherun
 // @description  选择条目加入“待删除列表”后批量删除，无需每个条目进行确认。
-// @description  设置页面参考代码，bangumi 过滤搜索结果，原始脚本作者：Liaune，代码地址，
-// @description  https://github.com/bangumi/scripts/blob/master/liaune/bangumi_result_blacklist.user.js
+// @icon         https://bgm.tv/pic/user/m/icon.jpg
 // @match        http*://bgm.tv/*
 // @match        http*://chii.in/*
 // @match        http*://bangumi.tv/*
